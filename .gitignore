@@ -1,0 +1,34 @@
+# Visual Studio
+.vs/
+*.VC.db
+*.VC.opendb
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.ipch
+*.pdb
+*.ilk
+*.obj
+*.pch
+*.idb
+*.tlog
+*.lastbuildstate
+
+# JUCE / Visual Studio build output
+Builds/VisualStudio*/x64/
+Builds/VisualStudio*/Win32/
+Builds/VisualStudio*/Debug/
+Builds/VisualStudio*/Release/
+
+# General build output
+Debug/
+Release/
+x64/
+x86/
+build/
+cmake-build-*/
+
+# OS junk
+.DS_Store
+Thumbs.db
