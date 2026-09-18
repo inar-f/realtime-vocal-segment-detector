@@ -1,4 +1,5 @@
 # Visual Studio
+.vscode/
 .vs/
 *.VC.db
 *.VC.opendb

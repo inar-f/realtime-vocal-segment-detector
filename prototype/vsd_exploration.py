@@ -11,6 +11,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from scipy.io import wavfile
+from scipy.signal.windows import hann
+
+TARGET_BUFFER = 1024
+TARGET_SAMPLE_RATE = 48000
+
+################################################################
+#################### SCRIPT   FUNCTIONS ########################
+################################################################
 
 def dummy_func(n: int) -> None:
     """Calculates the average velocity of a moving object.
@@ -27,12 +35,77 @@ def dummy_func(n: int) -> None:
     """
     return None
 
+def calculate_rms_db(rms: float):
+    if rms <= 0:
+        return -100.0
+
+    return 20 * np.log10(rms)
+
+# def calculate_band_ratios(samples: np.ndarray, sample_rate: int) -> list[float]:
+def calculate_band_ratios(samples: np.ndarray, sample_rate: int):
+    """
+    frame samples
+        → apply window function, like Hann
+        → FFT
+        → get magnitude spectrum
+        → split spectrum into bands
+        → calculate energy per band
+        → divide each band by total energy
+        → final metric: band ratios
+    """
+    calculated_ratios = []
+    hann_fft = hann(TARGET_BUFFER,sym=False)
+    temp_samples = np.copy(samples)
+
+    temp_samples = temp_samples * hann_fft
+    print(temp_samples)
+
+
+
+    
+
+def calculate_harmonicity(samples, sample_rate):
+    ...
+
+################################################################
+#################### STRUCTURE  CLASSES ########################
+################################################################
+
 class Frame:
-    COLORS = ["white", "black", "red", "blue", "green", "orange", "purple", "brown", "pink", "gray", "olive", "cyan"]
+    """ Frame
+
+    Colors:
+        silence     -   gray
+        breath      -   purple
+        sibilance   -   red
+        plosive     -   blue
+        voiced      -   green
+        transition  -   brown
+    """
+    COLORS = ["white", "black", "red",
+              "blue", "green", "orange",
+              "purple", "brown", "pink",
+              "gray", "olive", "cyan"]
+    
     def __init__(self, buffer_size: int) -> None:
         self.samples = np.zeros(buffer_size)
         r_color = rand.randint(0, len(self.COLORS)-1)
         self.color = self.COLORS[r_color]
+
+        # Lvl
+        self.rms = 0
+        self.level_db = 0
+
+        # Spectral dsitribution
+        # TODO: figure out band ratio split and structure.
+        # end goal is ofcourse at least 5 bands' ratios from lowest to highest band
+        # but question how those should be split
+        # hmm, approach a: 
+        band_ratios = []
+
+        # self.level_db = calculate_rms_db(self.samples)
+        # self.band_ratios = calculate_band_ratios(self.samples, self.sample_rate)
+        # self.harmonicity = calculate_harmonicity(self.samples, self.sample_rate)
 
     def get_samples(self) -> np.ndarray:
         return self.samples
@@ -40,8 +113,9 @@ class Frame:
     def get_color(self) -> str:
         return self.color
 
-    def update_samples(self, new_samples: np.ndarray) -> None:
+    def update_samples(self, new_samples: np.ndarray, new_rms: float) -> None:
         self.samples = np.copy(new_samples)
+        self.rms = new_rms
 
 class Window:
     FRAME_SIZES = [512, 1024, 2048]
@@ -74,16 +148,16 @@ class Window:
 
         self.frameRelations[loc_range] = self.newest_index
 
-    def add_frame(self, new_frame: np.ndarray) -> int:
+    def add_frame(self, new_frame: np.ndarray, new_rms: float) -> int:
         # Adds (more accurately, updates) and syncs frame into window
         # Returns which frame is updated
         writing_to = self.write_index
-        self.frames[writing_to].update_samples(new_frame)
+        self.frames[writing_to].update_samples(new_frame, new_rms)
         self.sync_trackers()
 
-        # TODO: extract desired features/info from frames
-
         return writing_to
+
+        # TODO: extract desired features/info from frames
         
     def get_frames(self) -> list[Frame]:
         return self.frames
@@ -97,6 +171,9 @@ class Window:
         print("\n")
 
 
+################################################################
+#################### TEST SAMPLE CONFIG ########################
+################################################################
 # Test file
 file_path = r"ASMR Historian-1816\becauseIts.wav"
 sample_rate, audio = wavfile.read(file_path)
@@ -112,9 +189,9 @@ if audio.dtype != np.float32 and audio.dtype != np.float64:
 len_samples = np.shape(audio)[0]
 time = np.arange(len_samples) / sample_rate
 
-# prompt_input = "1"
-# while prompt_input.strip() == "1":
-
+################################################################
+#################### MAIN PY VSD SCRIPT ########################
+################################################################
 win = Window(1)
 frame_size, window_frames = win.get_buffer_window()
 half_size = frame_size // 2
@@ -124,30 +201,55 @@ passing_samples = np.zeros(frame_size, dtype=np.float32)
 is_history_full = False
 sample_tracker = 0
 write_pos = 0
+half_A_passing_squared_sum = 0
+half_B_passing_squared_sum = 0
 
 frame_colors = []
+frames_counter = 0
+stop_after_frames = 10
 
 for i in range(len_samples):
+    if frames_counter == stop_after_frames:
+        break
+
+
     write_pos = sample_tracker % frame_size
     passing_samples[write_pos] = audio[i]
+
+    # frame full / overlap rms managing
+    if write_pos < half_size:
+        half_A_passing_squared_sum += audio[i] ** 2
+    else:
+        half_B_passing_squared_sum += audio[i] ** 2
 
     sample_tracker += 1
 
     # store formed frame slices
     if sample_tracker >= frame_size and sample_tracker % half_size == 0:
+        frames_counter += 1
+        rms_avg = np.sqrt((half_A_passing_squared_sum + half_B_passing_squared_sum) / frame_size)
+
+        # full frame in passing samples -> copy to update frame as is
         if sample_tracker % frame_size == 0:
-            new_frame = win.add_frame(passing_samples)
+            curr_frame = passing_samples
+            new_frame = win.add_frame(curr_frame, rms_avg)
             frame_colors.append(win.get_frames()[new_frame].get_color())
+
+            half_A_passing_squared_sum = 0
+
+        # half half frame -> take second half + first half of passing samples to make new overlapping frame
         else:
             curr_frame = np.append(passing_samples[half_size:], passing_samples[:half_size])
-            new_frame = win.add_frame(curr_frame)
+
+            new_frame = win.add_frame(curr_frame, rms_avg)
             frame_colors.append(win.get_frames()[new_frame].get_color())
+
+            half_B_passing_squared_sum = 0
+
 
 
 win.print_window()
 
-# prompt to stop/restart
-# prompt_input = input("[1]   Start/Reset   |   [2]   End         |\n ---> ")
 
 # VISUAL PLOTTING
 # build line segments per hop
